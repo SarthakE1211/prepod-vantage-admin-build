@@ -58,7 +58,7 @@ window.VANTAGE_ERROR = false;
       const account = r.PARENT_CUSTOMER || r.SUB_CUSTOMER || 'Unknown';
       const customer = r.SUB_CUSTOMER || account;
       tickets.push({
-        ticket_no: r.TICKET_NO || String(r.ID), account, customer,
+        order_id: r.ID, ticket_no: r.TICKET_NO || String(r.ID), account, customer,
         service: r.SERVICE && r.SERVICE !== 'Unassigned' ? r.SERVICE : '', received_at: stamp(created),
         visit_date: visit ? day(new Date(visit)) : null, priority: r.PRIORITY_LEVEL || 'P4',
         location: r.LOCATION || (r.CITY && r.CITY !== 'UNKNOWN' ? r.CITY : ''),
@@ -1087,6 +1087,14 @@ const msg = dlg.querySelector('.msg');
 let editing = null;
 const toLocal = (v) => (v ? String(v).slice(0, 16) : '');
 const fromLocal = (v) => (v ? v + ':00' : null);
+// Edit opens the order's Work Order Details page in the Vantage app around this page.
+// Opened on its own (no parent app) or for a ticket without an order id, it falls back to the editor here.
+function openOrder(row) {
+  if (row && row.order_id && window.parent && window.parent !== window) {
+    try { window.parent.postMessage({ type: 'vantage-admin-open-order', orderId: row.order_id }, location.origin); return; } catch (e) { }
+  }
+  openEditor(row);
+}
 function openEditor(row) {
   editing = row; msg.textContent = '';
   const isNew = !row.ticket_no;
@@ -1121,7 +1129,14 @@ function openEditor(row) {
 }
 dlg.querySelector('.vt-x').addEventListener('click', () => dlg.close());
 dlg.querySelector('.vt-cancel').addEventListener('click', () => dlg.close());
-document.querySelector('.vt-new').addEventListener('click', () => openEditor({}));
+// New ticket opens Vantage's work order page (Raise tickets) in the app around this page;
+// opened on its own (no parent app), it falls back to the editor here.
+document.querySelector('.vt-new').addEventListener('click', () => {
+  if (window.parent && window.parent !== window) {
+    try { window.parent.postMessage({ type: 'vantage-admin-raise-ticket' }, location.origin); return; } catch (e) { }
+  }
+  openEditor({});
+});
 dlg.querySelector('.vt-save').addEventListener('click', async () => {
   const v = {
     status: fe('status').value, priority: fe('priority').value, sla: fe('sla').value,
@@ -1570,7 +1585,7 @@ function render() {
         ci ? el('td', null, fTime(ci)) : el('td', 'muted', '—'),
         co && ci ? (() => { const c = el('td', null, fTime(co)); c.append(el('span', 'dur', 'On site ' + dur(ci, co))); return c; })() : co ? el('td', null, fTime(co)) : ci ? el('td', 'onsite', 'On site') : el('td', 'muted', '—'),
         el('td', 'opt', r.technician || '—'), el('td', 'opt', r.service || '—'), wrap(pill('l-', r.sla)), (() => { const c = el('td', 'act'); c.append(edit); return c; })());
-      tr.addEventListener('click', () => openEditor(r));
+      tr.addEventListener('click', () => openOrder(r));
       tb.append(tr);
     });
     tbl.append(thead, tb);
