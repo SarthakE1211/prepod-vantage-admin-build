@@ -295,6 +295,11 @@ window.VANTAGE_ERROR = false;
 .vt-expop .seg button { all: unset; flex: 1; text-align: center; font-size: 12px; padding: 7px 4px; border-radius: 6px; cursor: pointer; color: var(--mute); }
 .vt-expop .seg button[aria-pressed=true] { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
 .vt-expop .xhint { font-size: 11px; color: var(--mute); margin-top: 6px; }
+.vt-expop .xdsel { width: 100%; font: inherit; font-size: 12.5px; border: 1px solid #e0dada; border-radius: 8px; padding: 7px 10px; background: #fff; color: var(--ink); }
+.vt-expop .xdr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.vt-expop .xdr[hidden] { display: none; }
+.vt-expop .xdr label { flex-direction: column; align-items: stretch; gap: 3px; font-size: 11px; color: var(--mute); padding: 0; cursor: default; }
+.vt-expop .xdr input { font: inherit; font-size: 12px; border: 1px solid #e0dada; border-radius: 6px; padding: 5px 6px; min-width: 0; color: var(--ink); }
 .vt-expop .xf { padding: 12px 16px; display: flex; align-items: center; gap: 8px; }
 .vt-expop .xmsg { font-size: 11px; color: var(--mute); margin-right: auto; }
 .vt-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -407,6 +412,12 @@ window.VANTAGE_ERROR = false;
 .br-chip small { font-weight: 500; color: #8a5a60; margin-left: 4px; }
 .vt-brc .bct { font-size: 12px; color: var(--mute); }
 .vt-brc .bct b { color: var(--m2); font-size: 15px; }
+.vt-brc .brr { display: flex; align-items: center; gap: 10px; }
+.vt-brtog { all: unset; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--m2); padding: 4px 10px; border: 1px solid #f0d2d6; border-radius: 6px; white-space: nowrap; }
+.vt-brtog:hover { background: var(--pink); }
+.vt-brtog:focus-visible { outline: 2px solid var(--m2); outline-offset: 2px; }
+.vt-brc.collapsed .ah { margin-bottom: 0; }
+#vt-brbody[hidden] { display: none !important; }
 @keyframes vtflash { 0%, 60% { background: #fff1c2; } 100% { background: transparent; } }
 .vt-tbl tr.flash td { animation: vtflash 2.6s ease-out; }
 .vt .vt-att h2 { color: var(--m2); }
@@ -450,6 +461,24 @@ window.VANTAGE_ERROR = false;
               <label><input type="checkbox" data-sec="monthly"> Monthly reports <span class="xper" data-per="monthly"></span></label>
               <div class="xpick" data-pick="monthly" hidden></div>
             </div>
+            <div class="xs xdate"><div class="xg">Date received</div>
+              <select class="xdsel" aria-label="Date received for the export">
+                <option value="dash">Same as dashboard</option>
+                <option value="all">All time</option>
+                <option value="0">Today</option>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="tm">This month</option>
+                <option value="lm">Last month</option>
+                <option value="tq">This quarter</option>
+                <option value="lq">Last quarter</option>
+                <option value="ty">This year</option>
+                <option value="ly">Last year</option>
+                <option value="range">Custom date range</option>
+              </select>
+              <div class="xdr" hidden><label>From <input type="date" class="xfrom"></label><label>To <input type="date" class="xto"></label></div>
+              <div class="xhint xdhint"></div></div>
             <div class="xs"><div class="xg">Detail</div>
               <div class="seg" data-seg="detail"><button data-v="summary" aria-pressed="true">Summary</button><button data-v="full" aria-pressed="false">Full detail</button></div>
               <div class="xhint"></div></div>
@@ -483,9 +512,11 @@ window.VANTAGE_ERROR = false;
         <div class="vt-near dash-skeleton" data-source="tickets"></div>
       </div>
       <div class="vt-panel vt-brc" id="breached">
-        <div class="ah"><h2>⚠ Breached</h2><span class="bct"></span></div>
-        <div class="note">SLA breached, by customer. Click a ticket number to open it.</div>
-        <div class="vt-brl dash-skeleton" data-source="tickets"></div>
+        <div class="ah"><h2>⚠ Breached</h2><span class="brr"><span class="bct"></span><button type="button" class="vt-brtog" aria-expanded="true" aria-controls="vt-brbody">▴ Hide</button></span></div>
+        <div id="vt-brbody">
+          <div class="note">SLA breached, by customer. Click a ticket number to open it.</div>
+          <div class="vt-brl dash-skeleton" data-source="tickets"></div>
+        </div>
       </div>
     </section>
 
@@ -1014,6 +1045,11 @@ const isBreached = (r) => r.sla === 'Breached' || (OPEN.includes(r.status) && ms
 const fLeft = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m >= 60 ? Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm' : m + 'm'; };
 const VIEWS = { breached: isBreached, open: (t) => t.status === 'Created' || t.status === 'Scheduled', ongoing: (t) => t.status === 'Ongoing', completed: (t) => t.status === 'Completed' };
 
+// Work order table filters (view tile, customer, status, search) on top of scoped().
+const inView = (r) => (!VIEWS[S.view] || VIEWS[S.view](r)) &&
+  (!S.wcust.size || S.wcust.has(r.customer)) && (S.wstatus === 'all' || r.status === S.wstatus) &&
+  (!S.wq || String(r.ticket_no).toLowerCase().includes(S.wq)) &&
+  (!S.q || [r.ticket_no, r.location, r.technician, r.service, r.status, r.account, r.customer].join(' ').toLowerCase().includes(S.q));
 function scoped(rows) { // filters that drive the whole dashboard
   const w = windowDates();
   return rows.filter((t) => {
@@ -1078,6 +1114,20 @@ kpiBtns.forEach((b) => b.addEventListener('click', () => {
   render(); if (S.view !== 'all') document.getElementById('work-orders').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }));
 document.querySelector('.vt-refresh').addEventListener('click', () => { dash.refresh('tickets'); });
+// Breached panel: hide or show its ticket list (the count stays visible). Remembered in this browser.
+(() => {
+  const btn = document.querySelector('.vt-brtog'), body = document.getElementById('vt-brbody'), panel = document.getElementById('breached');
+  const KEY = 'vantage.admin.breachedHidden';
+  const set = (hidden) => {
+    body.hidden = hidden; panel.classList.toggle('collapsed', hidden);
+    btn.setAttribute('aria-expanded', String(!hidden)); btn.textContent = hidden ? '▾ Show' : '▴ Hide';
+    btn.title = hidden ? 'Show breached tickets' : 'Hide breached tickets';
+    try { localStorage.setItem(KEY, hidden ? '1' : '0'); } catch (e) { }
+  };
+  let start = false; try { start = localStorage.getItem(KEY) === '1'; } catch (e) { }
+  set(start);
+  btn.addEventListener('click', () => set(!body.hidden));
+})();
 
 // ---------- editor ----------
 const dlg = document.getElementById('vt-dlg');
@@ -1181,6 +1231,33 @@ dlg.querySelector('.vt-save').addEventListener('click', async () => {
 let lastList = [], lastScoped = [], lastAtt = [], lastBreach = [], lastK = null;
 const exw = document.querySelector('.vt-exw'), expop = exw.querySelector('.vt-expop'), exbtn = exw.querySelector('.vt-export');
 const X = { detail: 'summary', format: 'pdf' };
+// Export date range: 'dash' keeps the dashboard's Date received filter; anything else replaces it for the
+// export only (every other filter still applies). Calendar presets become a from/to range.
+const XD = { mode: 'dash', from: '', to: '' };
+function xdWindow() {
+  const today = d3.timeDay.floor(new Date()), y = today.getFullYear(), m = today.getMonth(), q = Math.floor(m / 3) * 3;
+  const rng = (a, b) => ({ period: 'range', from: fISO(a), to: fISO(d3.timeDay.offset(b, -1)) });
+  switch (XD.mode) {
+    case 'dash': return null;
+    case 'all': return { period: 'all' };
+    case 'tm': return rng(new Date(y, m, 1), d3.timeDay.offset(today, 1));
+    case 'lm': return rng(new Date(y, m - 1, 1), new Date(y, m, 1));
+    case 'tq': return rng(new Date(y, q, 1), d3.timeDay.offset(today, 1));
+    case 'lq': return rng(new Date(y, q - 3, 1), new Date(y, q, 1));
+    case 'ty': return rng(new Date(y, 0, 1), d3.timeDay.offset(today, 1));
+    case 'ly': return rng(new Date(y - 1, 0, 1), new Date(y, 0, 1));
+    case 'range': return { period: 'range', from: XD.from, to: XD.to };
+    default: return { period: XD.mode };
+  }
+}
+// Runs fn with the export's date range in place of the dashboard's, then puts the dashboard's back.
+function withExportDates(fn) {
+  const w = xdWindow(); if (!w) return fn();
+  const keep = { period: S.period, from: S.from, to: S.to };
+  Object.assign(S, { from: '', to: '' }, w);
+  try { return fn(); } finally { Object.assign(S, keep); }
+}
+const exportList = () => withExportDates(() => (allRows() ? scoped(allRows()).filter(inView) : []));
 const secBoxes = [...expop.querySelectorAll('[data-sec]')], allBox = expop.querySelector('[data-all]');
 const xmsg = expop.querySelector('.xmsg'), dlx = expop.querySelector('.vt-dlx');
 const PICK = { weekly: new Set(), monthly: new Set() };
@@ -1207,13 +1284,33 @@ const syncX = () => {
   expop.querySelectorAll('.seg').forEach((sg) => sg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(X[sg.dataset.seg] === b.dataset.v))));
   expop.querySelectorAll('.xper').forEach((e) => { const k = e.dataset.per; const n = PICK[k].size; e.textContent = n ? '(' + n + ' selected)' : ''; });
   expop.querySelectorAll('.xpick').forEach(drawPick);
-  expop.querySelector('.xhint').textContent = X.detail === 'summary' ? 'Top 12 states, 15 technicians and services, and the 25 latest work orders' : 'Every state, technician, service and work order (' + lastList.length + ' work orders)';
+  const xl = exportList();
+  expop.querySelector('.xhint').textContent = X.detail === 'summary' ? 'Top 12 states, 15 technicians and services, and the 25 latest work orders' : 'Every state, technician, service and work order (' + xl.length + ' work orders)';
+  expop.querySelector('.xdr').hidden = XD.mode !== 'range';
+  const xw = withExportDates(windowDates);
+  expop.querySelector('.xdhint').textContent = (XD.mode === 'range' && XD.from && XD.to && XD.from > XD.to) ? '“From” is after “To”.' :
+    (xw ? fShort(xw[0]) + ' – ' + fShort(d3.timeDay.offset(xw[1], -1)) : 'All dates') + ' · ' + xl.length.toLocaleString('en-US') + ' work order' + (xl.length === 1 ? '' : 's') +
+    (XD.mode === 'dash' ? ' (dashboard filter)' : '') + '. Weekly and monthly tracker reports use their own periods.';
 };
 exbtn.addEventListener('click', (e) => { e.stopPropagation(); expop.hidden = !expop.hidden; exbtn.setAttribute('aria-expanded', String(!expop.hidden)); xmsg.textContent = ''; syncX(); });
 expop.addEventListener('click', (e) => e.stopPropagation());
 document.addEventListener('click', () => { expop.hidden = true; exbtn.setAttribute('aria-expanded', 'false'); });
 allBox.addEventListener('change', () => { secBoxes.forEach((b) => { b.checked = allBox.checked; }); syncX(); });
 secBoxes.forEach((b) => b.addEventListener('change', syncX));
+{
+  const sel = expop.querySelector('.xdsel'), fromX = expop.querySelector('.xfrom'), toX = expop.querySelector('.xto');
+  sel.addEventListener('change', () => {
+    XD.mode = sel.value;
+    if (XD.mode === 'range' && !XD.from && !XD.to) { // start from the dashboard's window, or the last 30 days
+      const w = windowDates(), t = d3.timeDay.floor(new Date());
+      XD.from = fISO(w ? w[0] : d3.timeDay.offset(t, -29)); XD.to = fISO(w ? d3.timeDay.offset(w[1], -1) : t);
+      fromX.value = XD.from; toX.value = XD.to;
+    }
+    syncX();
+  });
+  fromX.addEventListener('change', () => { XD.from = fromX.value; syncX(); });
+  toX.addEventListener('change', () => { XD.to = toX.value; syncX(); });
+}
 expop.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => { X[b.parentElement.dataset.seg] = b.dataset.v; syncX(); }));
 
 function filterText() {
@@ -1458,10 +1555,11 @@ function opsSections(rows, want, full) {
   });
   return { sections: out, period };
 }
-function buildReport() {
+function buildReport() { return withExportDates(buildReportNow); }
+function buildReportNow() {
   const want = new Set(secBoxes.filter((b) => b.checked).map((b) => b.dataset.sec));
   const ops = want.size && [...want].some((k) => k !== 'weekly' && k !== 'monthly');
-  const { sections, period } = ops ? opsSections(lastList, want, X.detail === 'full') : { sections: [], period: '' };
+  const { sections, period } = ops ? opsSections(scoped(allRows()).filter(inView), want, X.detail === 'full') : { sections: [], period: '' };
   ['weekly', 'monthly'].forEach((k) => { if (want.has(k) && window.vtReports) sections.push(...window.vtReports.sections(k, [...PICK[k]])); });
   const label = S.accounts.size ? [...S.accounts].sort(numSort).join(', ') : 'All accounts';
   const exported = d3.timeFormat('%B %-d, %Y')(new Date());
@@ -1472,6 +1570,7 @@ function buildReport() {
 dlx.addEventListener('click', async () => {
   if (!window.vtExport) { xmsg.textContent = 'Export isn’t ready yet — try again.'; return; }
   if (!allRows()) { xmsg.textContent = 'The dashboard data is still loading — try again in a moment.'; return; }
+  if (XD.mode === 'range' && XD.from && XD.to && XD.from > XD.to) { xmsg.textContent = 'Pick a “From” date on or before the “To” date.'; return; }
   const rep = buildReport();
   if (!rep.sections.length) { xmsg.textContent = 'Pick at least one report.'; return; }
   const filename = (rep.title === 'Dispatch & SV Report' ? 'vantage-dispatch-sv-report-' : 'vantage-admin-operations-report-') + d3.timeFormat('%Y-%m-%d')(new Date()) + '.' + X.format;
@@ -1553,10 +1652,7 @@ function render() {
 
   // Groups — newest first in every account
   const box = boxes[0]; box.classList.remove('dash-skeleton');
-  const list = sc.filter((r) => (!VIEWS[S.view] || VIEWS[S.view](r)) &&
-    (!S.wcust.size || S.wcust.has(r.customer)) && (S.wstatus === 'all' || r.status === S.wstatus) &&
-    (!S.wq || String(r.ticket_no).toLowerCase().includes(S.wq)) &&
-    (!S.q || [r.ticket_no, r.location, r.technician, r.service, r.status, r.account, r.customer].join(' ').toLowerCase().includes(S.q)));
+  const list = sc.filter(inView);
   lastList = list;
   const groups = d3.groups(list, (r) => r.account).sort((a, b) => numSort(a[0], b[0]));
   if (!groups.length) { box.replaceChildren(el('div', 'vt-empty', 'No work orders match these filters.')); return; }
