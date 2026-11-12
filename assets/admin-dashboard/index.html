@@ -80,8 +80,12 @@ window.VANTAGE_ERROR = false;
         missed: open && sla === 'Breached' ? 1 : 0,
       };
       const base = { client: account, end_client: customer, type: typeOf(r.VISIT_TYPE) };
-      const ws = new Date(created.getFullYear(), created.getMonth(), created.getDate() - (created.getDay() + 6) % 7);
-      const we = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + 6);
+      // Mon–Sun weeks, cut at month boundaries like the tracker ("29th June - 30th June", "1st July - 5th July")
+      // so the weekly blocks of a month add up to that month.
+      const mon = new Date(created.getFullYear(), created.getMonth(), created.getDate() - (created.getDay() + 6) % 7);
+      const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+      const mFirst = new Date(created.getFullYear(), created.getMonth(), 1), mLast = new Date(created.getFullYear(), created.getMonth() + 1, 0);
+      const ws = mon < mFirst ? mFirst : mon, we = sun > mLast ? mLast : sun;
       const week = day(ws) + '_' + day(we);
       const month = created.getFullYear() + '-' + pad(created.getMonth() + 1);
       const addTo = (map, key, extra) => {
@@ -418,6 +422,8 @@ window.VANTAGE_ERROR = false;
 .vt-brtog:focus-visible { outline: 2px solid var(--m2); outline-offset: 2px; }
 .vt-brc.collapsed .ah { margin-bottom: 0; }
 #vt-brbody[hidden] { display: none !important; }
+.vt-brc .brcf { flex: 1 1 12rem; justify-content: center; min-width: 0; }
+.vt-brc .brcf select { max-width: 16rem; min-width: 0; }
 @keyframes vtflash { 0%, 60% { background: #fff1c2; } 100% { background: transparent; } }
 .vt-tbl tr.flash td { animation: vtflash 2.6s ease-out; }
 .vt .vt-att h2 { color: var(--m2); }
@@ -512,7 +518,7 @@ window.VANTAGE_ERROR = false;
         <div class="vt-near dash-skeleton" data-source="tickets"></div>
       </div>
       <div class="vt-panel vt-brc" id="breached">
-        <div class="ah"><h2>⚠ Breached</h2><span class="brr"><span class="bct"></span><button type="button" class="vt-brtog" aria-expanded="true" aria-controls="vt-brbody">▴ Hide</button></span></div>
+        <div class="ah"><h2>⚠ Breached</h2><label class="ath brcf">Customer <select id="vt-brcust" aria-label="Filter breached tickets by customer"><option value="">All customers</option></select></label><span class="brr"><span class="bct"></span><button type="button" class="vt-brtog" aria-expanded="true" aria-controls="vt-brbody">▴ Hide</button></span></div>
         <div id="vt-brbody">
           <div class="note">SLA breached, by customer. Click a ticket number to open it.</div>
           <div class="vt-brl dash-skeleton" data-source="tickets"></div>
@@ -905,22 +911,41 @@ window.VANTAGE_ERROR = false;
   }
 
   // ---------------- XLSX (one sheet per section) ----------------
-  // Styles: 0 normal, 1 title, 2 muted, 3 bold, 4 table header, 5 total row, 6 percent, 7 total percent, 8 key figure value
-  const STYLES = HDR + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts>'
-    + '<fonts count="4"><font><sz val="10"/><name val="Arial"/></font><font><b/><sz val="14"/><name val="Arial"/></font><font><sz val="9"/><color rgb="FF6B6B75"/><name val="Arial"/></font><font><b/><sz val="10"/><name val="Arial"/></font></fonts>'
-    + '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF3F3F3"/><bgColor indexed="64"/></patternFill></fill></fills>'
-    + '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFC8102E"/></bottom><diagonal/></border></borders>'
-    + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="9">'
-    + '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
-    + '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
-    + '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
-    + '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
-    + '<xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'
-    + '<xf numFmtId="0" fontId="3" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
-    + '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
-    + '<xf numFmtId="164" fontId="3" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>'
-    + '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment horizontal="right"/></xf>'
-    + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  // Style registry: each distinct look becomes one cellXfs entry. The first nine keep the ids the generic sheets use:
+  // 0 normal, 1 title, 2 muted, 3 bold, 4 table header, 5 total row, 6 percent, 7 total percent, 8 key figure value
+  function styleBook() {
+    const fonts = [], fills = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'], borders = [], fmts = [], xfs = [];
+    const idx = (arr, v) => { let i = arr.indexOf(v); if (i < 0) { arr.push(v); i = arr.length - 1; } return i; };
+    const BUILTIN = { General: 0, '0%': 9, '0.00%': 10, 'mmm-yy': 17 };
+    const side = (n, st, c) => (st ? '<' + n + ' style="' + st + '"><color rgb="FF' + (c || '000000') + '"/></' + n + '>' : '<' + n + '/>');
+    const BORDER = {
+      none: '<border><left/><right/><top/><bottom/><diagonal/></border>',
+      thin: '<border>' + side('left', 'thin') + side('right', 'thin') + side('top', 'thin') + side('bottom', 'thin') + '<diagonal/></border>',
+      red: '<border><left/><right/><top/>' + side('bottom', 'thin', 'C8102E') + '<diagonal/></border>',
+    };
+    idx(borders, BORDER.none);
+    const api = {
+      add(sp) {
+        const f = sp.font || {};
+        const font = idx(fonts, '<font>' + (f.b ? '<b/>' : '') + '<sz val="' + (f.sz || 10) + '"/>' + (f.color ? '<color rgb="FF' + f.color + '"/>' : '') + '<name val="' + (f.name || 'Arial') + '"/></font>');
+        const fill = sp.fill ? idx(fills, '<fill><patternFill patternType="solid"><fgColor rgb="FF' + sp.fill + '"/><bgColor indexed="64"/></patternFill></fill>') : 0;
+        const border = idx(borders, BORDER[sp.border || 'none']);
+        const nf = sp.nf ? (BUILTIN[sp.nf] != null ? BUILTIN[sp.nf] : 164 + idx(fmts, sp.nf)) : 0;
+        const al = sp.h || sp.v || sp.wrap ? '<alignment' + (sp.h ? ' horizontal="' + sp.h + '"' : '') + (sp.v ? ' vertical="' + sp.v + '"' : '') + (sp.wrap ? ' wrapText="1"' : '') + '/>' : '';
+        return idx(xfs, '<xf numFmtId="' + nf + '" fontId="' + font + '" fillId="' + fill + '" borderId="' + border + '" xfId="0"' + (nf ? ' applyNumberFormat="1"' : '') + ' applyFont="1"' + (fill ? ' applyFill="1"' : '') + (border ? ' applyBorder="1"' : '') + (al ? ' applyAlignment="1">' + al + '</xf>' : '/>'));
+      },
+      xml() {
+        return HDR + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          + (fmts.length ? '<numFmts count="' + fmts.length + '">' + fmts.map((f, i) => '<numFmt numFmtId="' + (164 + i) + '" formatCode="' + x(f) + '"/>').join('') + '</numFmts>' : '')
+          + '<fonts count="' + fonts.length + '">' + fonts.join('') + '</fonts><fills count="' + fills.length + '">' + fills.join('') + '</fills><borders count="' + borders.length + '">' + borders.join('') + '</borders>'
+          + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="' + xfs.length + '">' + xfs.join('') + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+      },
+    };
+    const GREY = 'F3F3F3';
+    [{}, { font: { b: 1, sz: 14 } }, { font: { sz: 9, color: '6B6B75' } }, { font: { b: 1 } }, { font: { b: 1 }, fill: GREY, border: 'red' }, { font: { b: 1 }, fill: GREY },
+      { nf: '0.0%' }, { nf: '0.0%', font: { b: 1 }, fill: GREY }, { font: { b: 1 }, h: 'right' }].forEach((sp) => api.add(sp));
+    return api;
+  }
   const colName = (i) => { let s = ''; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
   function sheetXml(rows) {
     const widths = [];
@@ -937,15 +962,114 @@ window.VANTAGE_ERROR = false;
     const cols = widths.length ? '<cols>' + widths.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + (w || 8) + '" customWidth="1"/>').join('') + '</cols>' : '';
     return HDR + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0" showGridLines="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>' + cols + '<sheetData>' + body + '</sheetData></worksheet>';
   }
+
+  // ---------------- Dispatch & SV tracker sheets ("3. Weekly Data" / "4. Monthly Data") ----------------
+  // Same layout, colours, formulas and column order as the O_DEL Master Dispatch & SV Tracker workbook:
+  // one block per week or month (title band, period, header, a row per Client x End-Client x Request type, Total).
+  const SUMK = ['received', 'ack_met', 'cancelled', 'completed_sla', 'resched_in', 'resched_out', 'incomplete', 'missed'];
+  const MONEY = '_-[$$-409]* #,##0.00_ ;_-[$$-409]* \\-#,##0.00\\ ;_-[$$-409]* "-"??_ ;_-@_ ';
+  function trackerSheet(kind, blocks, reg) {
+    const monthly = kind === 'monthly';
+    const N = monthly ? 19 : 18, LAST = colName(N - 1);
+    const S = (o) => reg.add(Object.assign({}, o, { font: Object.assign({ name: 'Segoe UI', sz: 11 }, o.font || {}) }));
+    const H = monthly
+      ? ['Sr. No.', 'Client', 'End-Client', 'Request Type\n(SV or Dispatch)', 'Tickets Received\nexcluding\nRescheduled', 'TOTAL\nTickets Received', 'Acknowledgement SLA Met', 'Acknowledgement SLA Missed', 'Tickets Cancelled by client', 'Workable Tickets', 'Tickets Completed within On Site Response SLA', 'Rescheduled & Completed within SLA', 'Rescheduled & Completed outside SLA', 'INCOMPLETE', 'Tickets Missed', 'On Site SLA Achievement', 'Acknowledgement SLA Achievement ', 'Remarks', 'BILLING Amount / No Retainers\n(from INV tracker)']
+      : ['Sr. No.', 'Client', 'End-Client', 'Request Type\n(SV or Dispatch)', 'Tickets Received\nexcluding\nRescheduled', 'Tickets Received', 'Acknowledgement SLA Met', 'Acknowledgement SLA Missed', 'Tickets Cancelled by client', 'Workable Tickets', 'Tickets Completed within On Site Response SLA', 'Rescheduled & Completed within SLA', 'Rescheduled & Completed outside SLA', 'Incomplete', 'Tickets Missed', 'On Site SLA Achievement', 'Acknowledgement SLA Achievement ', 'Remarks'];
+    // [fill, font colour] per column for the header row (the Total row reuses it)
+    const W_ = 'FFFFFF', K_ = '000000', CR = 'FFF2CC';
+    const HEAD = monthly
+      ? [[CR, K_], [CR, K_], [CR, K_], [CR, K_], ['1F4E79', W_], ['548235', W_], [CR, K_], ['FFC000', K_], ['C00000', W_], ['92D050', K_], [CR, K_], [CR, K_], [CR, K_], ['000000', W_], ['C00000', W_], ['548235', W_], ['548235', W_], ['D0CECE', K_], ['806000', W_]]
+      : [[CR, K_], [CR, K_], [CR, K_], [CR, K_], ['1F4E79', W_], ['548235', W_], [CR, K_], ['FFD966', K_], ['C55A11', W_], ['92D050', K_], [CR, K_], [CR, K_], [CR, K_], ['262626', W_], ['C00000', W_], ['548235', W_], ['548235', W_], ['D0CECE', K_]];
+    const TOT = HEAD.map((h, i) => (!monthly && i === 8 ? ['ED7D31', W_] : h));
+    // data-row fills (null = no fill)
+    const BODY = monthly
+      ? [W_, W_, W_, W_, 'DEEBF7', W_, W_, CR, 'FBE5D6', 'E2EFDA', W_, W_, W_, '808080', 'FCE4D6', 'E2EFDA', 'E2EFDA', 'F2F2F2', CR]
+      : [null, null, null, null, 'E6EBFA', null, null, CR, 'FBE5D6', 'E2F0D9', null, null, null, 'F2F2F2', 'FBE5D6', 'E2F0D9', 'E2F0D9', null];
+    const pctTot = monthly ? '0.0%' : '0.00%';
+    const hdrS = HEAD.map(([fill, color]) => S({ fill, font: { b: 1, color }, border: 'thin', h: 'center', v: 'center', wrap: true }));
+    const totS = TOT.map(([fill, color], i) => S({ fill, font: { b: 1, color }, border: 'thin', h: i === 17 ? 'left' : 'center', v: i === 17 ? 'top' : 'center', wrap: i === 17,
+      nf: i === 15 || i === 16 ? pctTot : i === 18 ? MONEY : null }));
+    const bodyS = (i, red) => S({ fill: BODY[i], border: 'thin',
+      font: { color: i === 17 ? (red || !monthly ? 'FF0000' : K_) : i === 13 && monthly ? 'FFFF00' : K_ },
+      h: i === 0 || (i > 3 && i < 17) ? 'center' : i === 18 ? null : 'left', v: i === 17 && monthly ? 'top' : 'center', wrap: i === 17,
+      nf: i === 15 || i === 16 ? '0%' : i === 18 ? MONEY : null });
+    const bodyN = BODY.map((_, i) => bodyS(i, false)), bodyRed = bodyS(17, true);
+    const titleS = S({ fill: '002060', font: { sz: 18, b: 1, color: monthly ? 'FFFF00' : 'FFFFFF' }, border: 'thin', h: 'left', v: 'center' });
+    const periodS = monthly ? S({ fill: '1F4E78', font: { sz: 18, b: 1, color: 'FFFFFF' }, border: 'thin', h: 'left', v: 'center', nf: 'mmm-yy' })
+      : S({ fill: '203864', font: { sz: 16, b: 1, color: 'FFFF00' }, border: 'thin', h: 'left', v: 'center' });
+    const instS = S({ fill: '203864', font: { b: 1, color: 'FFFF00' }, border: 'thin', h: 'left', v: 'center', wrap: true });
+    const instW = S({ fill: '203864', font: { b: 1, color: 'FFFFFF' }, border: 'thin', h: 'left', v: 'center', wrap: true });
+
+    const rows = [], merges = [];
+    let r = 0;
+    const cell = (ref, s, v, f) => {
+      if (f != null) return '<c r="' + ref + '" s="' + s + '"' + (typeof v === 'string' ? ' t="str"' : '') + '><f>' + x(f) + '</f>' + (v == null ? '' : '<v>' + x(v) + '</v>') + '</c>';
+      if (v == null || v === '') return '<c r="' + ref + '" s="' + s + '"/>';
+      return isNum(v) ? '<c r="' + ref + '" s="' + s + '"><v>' + v + '</v></c>' : '<c r="' + ref + '" s="' + s + '" t="inlineStr"><is><t xml:space="preserve">' + x(v) + '</t></is></c>';
+    };
+    const band = (v, s, h) => {
+      r++; merges.push('A' + r + ':' + LAST + r);
+      rows.push('<row r="' + r + '" ht="' + h + '" customHeight="1">' + cell('A' + r, s, v) + Array.from({ length: N - 1 }, (_, i) => cell(colName(i + 1) + r, s)).join('') + '</row>');
+    };
+    const ratio = (a, b) => (b ? a / b : '');
+    blocks.forEach((b, bi) => {
+      if (bi) r++; // one empty row between blocks
+      band(b.title, titleS, 26.25);
+      if (monthly) band(b.serial, periodS, 26.25);
+      else {
+        band(b.label, periodS, 21);
+        band('Instructions:', instS, 15);
+        ['DO NOT DELETE accounts from the list, if any account is missing - add them.', 'Enter remarks for Cancelled, Rescheduled or Chargeable tickets.', 'DO NOT EDIT coloured columns (they have formulas).'].forEach((t) => band(t, instW, 15));
+      }
+      r++;
+      rows.push('<row r="' + r + '" ht="' + (monthly ? 49.5 : 43.5) + '" customHeight="1">' + H.map((h, i) => cell(colName(i) + r, hdrS[i], h)).join('') + '</row>');
+      const first = r + 1;
+      b.rows.forEach((d, i) => {
+        r++; const n = r;
+        const J = d.received - d.cancelled, active = d.received > 0;
+        const v = [i + 1, d.client, d.end_client, d.type, d.received - d.resched_out, d.received, d.ack_met, d.received - d.ack_met, d.cancelled, J,
+          d.completed_sla, d.resched_in, d.resched_out, d.incomplete, d.missed, ratio(d.completed_sla + d.resched_in, J), ratio(d.ack_met, d.received), active ? d.remarks : 'No Activity'];
+        const f = [null, null, null, null, 'F' + n + '-M' + n, null, null, 'F' + n + '-G' + n, null, 'F' + n + '-I' + n, null, null, null, null, null,
+          'IFERROR((K' + n + '+L' + n + ')/J' + n + ',"")', 'IFERROR(G' + n + '/F' + n + ',"")', null];
+        if (monthly) { v.push(d.billing == null ? '' : d.billing); f.push(null); }
+        rows.push('<row r="' + n + '">' + v.map((val, ci) => cell(colName(ci) + n, ci === 17 && !active ? bodyRed : bodyN[ci], val, f[ci])).join('') + '</row>');
+      });
+      const lastR = r; r++;
+      const sum = (k) => b.rows.reduce((a, d) => a + (+d[k] || 0), 0);
+      const T = {}; SUMK.forEach((k) => { T[k] = sum(k); });
+      const avg = (fn) => { const xs = b.rows.map(fn).filter((q) => q !== ''); return xs.length ? xs.reduce((a, q) => a + q, 0) / xs.length : ''; };
+      const rng = (c) => c + first + ':' + c + lastR;
+      const has = b.rows.length > 0;
+      const tv = ['', '', '', 'Total', T.received - T.resched_out, T.received, T.ack_met, T.received - T.ack_met, T.cancelled, T.received - T.cancelled, T.completed_sla, T.resched_in, T.resched_out, T.incomplete, T.missed,
+        avg((d) => ratio(d.completed_sla + d.resched_in, d.received - d.cancelled)), avg((d) => ratio(d.ack_met, d.received)), ''];
+      const tf = [null, null, null, null].concat('EFGHIJKLMNO'.split('').map((c) => (has ? 'SUM(' + rng(c) + ')' : null)),
+        [has ? 'IFERROR(AVERAGE(' + rng('P') + '),"")' : null, has ? 'IFERROR(AVERAGE(' + rng('Q') + '),"")' : null, null]);
+      if (monthly) { tv.push(sum('billing')); tf.push(has ? 'SUM(' + rng('S') + ')' : null); }
+      rows.push('<row r="' + r + '">' + tv.map((val, ci) => cell(colName(ci) + r, totS[ci], val, tf[ci])).join('') + '</row>');
+    });
+    const WID = monthly ? [13.29, 13.57, 24.57, 23.29, 24.14, 15, 22.14, 15, 19.71, 24.14, 25.86, 21.14, 20.14, 13, 20.57, 17.86, 19.57, 120, 47.57]
+      : [8.71, 11.43, 23.43, 19.57, 22.86, 20, 20.86, 20.71, 15.43, 25.71, 25, 29.14, 28.43, 13, 16.57, 21.14, 26.57, 117.86];
+    return HDR + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0" zoomScale="70" zoomScaleNormal="70"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>'
+      + '<cols>' + WID.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('') + '</cols>'
+      + '<sheetData>' + rows.join('') + '</sheetData>'
+      + (merges.length ? '<mergeCells count="' + merges.length + '">' + merges.map((m) => '<mergeCell ref="' + m + '"/>').join('') + '</mergeCells>' : '') + '</worksheet>';
+  }
+
+  // report.tracker = { weekly: [block], monthly: [block] } adds the tracker sheets. A report with only
+  // tracker blocks gives just "3. Weekly Data" / "4. Monthly Data", like the tracker workbook.
   function xlsx(report) {
+    const reg = styleBook();
     const sheets = [];
     const used = new Set();
     const nameOf = (t) => { let base = String(t).replace(/[\[\]:*?/\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 28) || 'Sheet'; let n = base, k = 2; while (used.has(n.toLowerCase())) n = base.slice(0, 25) + ' ' + k++; used.add(n.toLowerCase()); return n; };
-    sheets.push([nameOf('Contents'), [
-      [{ v: report.label + ' · ' + report.title, s: 1 }], [{ v: report.subtitle, s: 2 }], [],
-      [{ v: 'Contents', s: 3 }], ...report.contents.map((c, i) => [(i + 1) + '. ' + c]),
-    ]]);
-    report.sections.map(norm).forEach((s, si) => {
+    const secs = report.sections.map(norm);
+    if (secs.length) {
+      sheets.push([nameOf('Contents'), sheetXml([
+        [{ v: report.label + ' · ' + report.title, s: 1 }], [{ v: report.subtitle, s: 2 }], [],
+        [{ v: 'Contents', s: 3 }], ...report.contents.map((c, i) => [(i + 1) + '. ' + c]),
+      ])]);
+    }
+    secs.forEach((s, si) => {
       const rows = [[{ v: s.title, s: 1 }], [{ v: s.period || '', s: 2 }], []];
       if (s.kpis && s.kpis.length) {
         rows.push([{ v: 'Key figures', s: 3 }]);
@@ -960,15 +1084,18 @@ window.VANTAGE_ERROR = false;
         rows.push([]);
       }
       if (s.note) rows.push([{ v: s.note, s: 2 }]);
-      sheets.push([nameOf((si + 1) + '. ' + s.title), rows]);
+      sheets.push([nameOf((si + 1) + '. ' + s.title), sheetXml(rows)]);
     });
+    const tr = report.tracker || {};
+    if (tr.weekly && tr.weekly.length) sheets.push([nameOf('3. Weekly Data'), trackerSheet('weekly', tr.weekly, reg)]);
+    if (tr.monthly && tr.monthly.length) sheets.push([nameOf('4. Monthly Data'), trackerSheet('monthly', tr.monthly, reg)]);
     const files = [];
     files.push(['[Content_Types].xml', HDR + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + sheets.map((_, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') + '</Types>']);
     files.push(['_rels/.rels', rels([['rId1', 'officeDocument', 'xl/workbook.xml']])]);
-    files.push(['xl/workbook.xml', HDR + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheets.map(([n], i) => '<sheet name="' + x(n) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join('') + '</sheets></workbook>']);
+    files.push(['xl/workbook.xml', HDR + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheets.map(([n], i) => '<sheet name="' + x(n) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join('') + '</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>']);
     files.push(['xl/_rels/workbook.xml.rels', rels(sheets.map((_, i) => ['rId' + (i + 1), 'worksheet', 'worksheets/sheet' + (i + 1) + '.xml']).concat([['rId' + (sheets.length + 1), 'styles', 'styles.xml']]))]);
-    files.push(['xl/styles.xml', STYLES]);
-    sheets.forEach(([, rows], i) => files.push(['xl/worksheets/sheet' + (i + 1) + '.xml', sheetXml(rows)]));
+    sheets.forEach(([, xml], i) => files.push(['xl/worksheets/sheet' + (i + 1) + '.xml', xml]));
+    files.push(['xl/styles.xml', reg.xml()]);
     return new Blob(zip(files), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   }
 
@@ -1560,20 +1687,28 @@ function buildReportNow() {
   const want = new Set(secBoxes.filter((b) => b.checked).map((b) => b.dataset.sec));
   const ops = want.size && [...want].some((k) => k !== 'weekly' && k !== 'monthly');
   const { sections, period } = ops ? opsSections(scoped(allRows()).filter(inView), want, X.detail === 'full') : { sections: [], period: '' };
-  ['weekly', 'monthly'].forEach((k) => { if (want.has(k) && window.vtReports) sections.push(...window.vtReports.sections(k, [...PICK[k]])); });
+  // Excel gets the weekly / monthly reports as tracker sheets ("3. Weekly Data", "4. Monthly Data") in the
+  // O_DEL Master Dispatch & SV Tracker layout; PDF and PowerPoint keep the summary sections.
+  const tracker = {};
+  ['weekly', 'monthly'].forEach((k) => {
+    if (!want.has(k) || !window.vtReports) return;
+    if (X.format === 'xlsx') tracker[k] = window.vtReports.trackerBlocks(k, [...PICK[k]]);
+    else sections.push(...window.vtReports.sections(k, [...PICK[k]]));
+  });
   const label = S.accounts.size ? [...S.accounts].sort(numSort).join(', ') : 'All accounts';
   const exported = d3.timeFormat('%B %-d, %Y')(new Date());
   return ops
-    ? { label, title: 'Admin operations report', subtitle: 'Vantage admin dashboard · ' + period + ' · exported ' + exported + '   |   ' + filterText(), generated: exported, contents: sections.map((s) => s.title), sections }
-    : { label: 'Dispatch & SV', title: 'Dispatch & SV Report', subtitle: 'Source: O_DEL Master Dispatch & SV Tracker 2026 · exported ' + exported, generated: exported, contents: sections.map((s) => s.title), sections };
+    ? { label, title: 'Admin operations report', subtitle: 'Vantage admin dashboard · ' + period + ' · exported ' + exported + '   |   ' + filterText(), generated: exported, contents: sections.map((s) => s.title), sections, tracker }
+    : { label: 'Dispatch & SV', title: 'Dispatch & SV Report', subtitle: 'Source: O_DEL Master Dispatch & SV Tracker 2026 · exported ' + exported, generated: exported, contents: sections.map((s) => s.title), sections, tracker };
 }
 dlx.addEventListener('click', async () => {
   if (!window.vtExport) { xmsg.textContent = 'Export isn’t ready yet — try again.'; return; }
   if (!allRows()) { xmsg.textContent = 'The dashboard data is still loading — try again in a moment.'; return; }
   if (XD.mode === 'range' && XD.from && XD.to && XD.from > XD.to) { xmsg.textContent = 'Pick a “From” date on or before the “To” date.'; return; }
   const rep = buildReport();
-  if (!rep.sections.length) { xmsg.textContent = 'Pick at least one report.'; return; }
-  const filename = (rep.title === 'Dispatch & SV Report' ? 'vantage-dispatch-sv-report-' : 'vantage-admin-operations-report-') + d3.timeFormat('%Y-%m-%d')(new Date()) + '.' + X.format;
+  const trackerOnly = rep.title === 'Dispatch & SV Report' && X.format === 'xlsx';
+  if (!rep.sections.length && !Object.values(rep.tracker || {}).some((b) => b.length)) { xmsg.textContent = 'Pick at least one report.'; return; }
+  const filename = (trackerOnly ? 'O_DEL Master Dispatch & SV Tracker ' : rep.title === 'Dispatch & SV Report' ? 'vantage-dispatch-sv-report-' : 'vantage-admin-operations-report-') + d3.timeFormat('%Y-%m-%d')(new Date()) + '.' + X.format;
   dlx.disabled = true; xmsg.textContent = 'Preparing…';
   try {
     const blob = window.vtExport[X.format](rep);
@@ -1624,7 +1759,15 @@ function render() {
   const TH = (+document.getElementById('vt-th').value || 4) * 3600000;
   const near = sc.filter((r) => OPEN.includes(r.status) && !isBreached(r) && (r.sla === 'At risk' || (msLeft(r) != null && msLeft(r) <= TH)))
     .sort((a, b) => (msLeft(a) ?? Infinity) - (msLeft(b) ?? Infinity) || a.priority.localeCompare(b.priority));
-  const breached = sc.filter(isBreached);
+  const allBreached = sc.filter(isBreached);
+  // Customer filter on the Breached panel: options are the customers that have breached tickets in the current scope.
+  const brSel = document.getElementById('vt-brcust');
+  const brCusts = d3.groups(allBreached, (r) => r.customer).map(([c, a]) => [c, a.length]).sort((a, b) => numSort(a[0], b[0]));
+  if (brSel.value && !brCusts.some(([c]) => c === brSel.value)) brSel.value = '';
+  const brKeep = brSel.value;
+  brSel.replaceChildren(new Option('All customers (' + allBreached.length + ')', ''), ...brCusts.map(([c, n]) => new Option(c + ' (' + n + ')', c)));
+  brSel.value = brKeep;
+  const breached = brKeep ? allBreached.filter((r) => r.customer === brKeep) : allBreached;
   lastAtt = near; lastBreach = breached;
   const nbox = boxes[1]; nbox.classList.remove('dash-skeleton');
   nbox.replaceChildren(...(near.length ? near.map((r) => {
@@ -1702,6 +1845,7 @@ function goToTicket(no) {
   tr.classList.remove('flash'); void tr.offsetWidth; tr.classList.add('flash');
 }
 document.getElementById('vt-th').addEventListener('change', () => render());
+document.getElementById('vt-brcust').addEventListener('change', () => render());
 setInterval(() => { if (!document.hidden) render(); }, 60000);
 dash.onData(render);
 })();
@@ -2011,6 +2155,46 @@ dash.onData(render);
         { title: name + ' — ticket count', kind: 'table', columns: dcols.map(([label, , w]) => ({ label, w })),
           rows: det.map((r) => dcols.map(([, k]) => f(k, r[k]))).concat([dcols.map(([, k], i) => (i === 0 ? 'Total' : ['end_client', 'type', 'remarks'].includes(k) ? '' : f(k, A[k])))]) },
       ];
+    },
+    // Blocks for the tracker-format Excel sheets: every Client x End-Client x Request type seen in the data is listed in
+    // every period (the tracker keeps all accounts; idle ones say "No Activity"), using the report page's filters.
+    trackerBlocks(kind, chosen) {
+      const cfg = CFG[kind]; const all = rowsFor(kind); if (!all) return [];
+      const pers = periods(kind, all);
+      const list = (chosen && chosen.length ? chosen.filter((p) => pers.includes(p)) : [this.current(kind)]).filter(Boolean).sort();
+      const rows = filtered(kind, all);
+      const key = (r) => r.client + '|' + r.end_client + '|' + r.type;
+      const combos = [...d3.group(rows, key).values()].map((rs) => ({ client: rs[0].client, end_client: rs[0].end_client, type: rs[0].type }))
+        .sort((a, b) => numSort(a.end_client, b.end_client) || numSort(a.client, b.client) || numSort(a.type, b.type));
+      // Remarks in the tracker's style ("1 Cancelled by Client.", "2 Ack SLA Missed.")
+      const remark = (r) => [
+        r.cancelled && r.cancelled + ' Cancelled by Client.',
+        r.ack_missed && r.ack_missed + ' Ack SLA Missed.',
+        r.resched_out && r.resched_out + ' Rescheduled & completed outside SLA.',
+        r.missed && r.missed + ' Missed (open past SLA).',
+      ].filter(Boolean).join('\n');
+      return list.map((p) => {
+        const cur = new Map(rows.filter((r) => r[cfg.key] === p).map((r) => [key(r), r]));
+        const block = {
+          id: p,
+          title: kind === 'weekly' ? 'Weekly Dispatch Ticket Count' : 'Monthly Dispatch Ticket Count',
+          rows: combos.map((c) => {
+            const r = cur.get(key(c)) || {};
+            const o = { ...c, remarks: r.remarks || remark(r), billing: r.billing == null ? null : +r.billing };
+            ['received', 'ack_met', 'ack_missed', 'cancelled', 'completed_sla', 'resched_in', 'resched_out', 'incomplete', 'missed'].forEach((k) => { o[k] = +r[k] || 0; });
+            return o;
+          }),
+        };
+        if (kind === 'weekly') {
+          const [s, e] = p.split('_').map(pDay);
+          const f = d3.timeFormat('%-d %b');
+          block.label = s && e ? (+s === +e ? f(s) : f(s) + ' - ' + f(e)) + ' ' + d3.timeFormat('%Y')(e) : p;
+        } else {
+          const m = pMon(p);
+          block.serial = m ? Math.round((Date.UTC(m.getFullYear(), m.getMonth(), 1) - Date.UTC(1899, 11, 30)) / 86400000) : p;
+        }
+        return block;
+      });
     },
     label(kind) { const st = ST[kind]; const all = rowsFor(kind); if (!all) return ''; const pers = periods(kind, all); return CFG[kind].label(st.period && pers.includes(st.period) ? st.period : pers[pers.length - 1]); },
   };
